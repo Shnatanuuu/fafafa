@@ -890,18 +890,7 @@ def generate_pdf():
     
     # Signature table
     sig_data = [
-        [
-            create_paragraph(translate_pdf_content("Sales:", pdf_lang), bold=True),
-            create_paragraph(sales_signature_val if sales_signature_val else "_________________"),
-            create_paragraph(translate_pdf_content("Date:", pdf_lang), bold=True),
-            create_paragraph(sales_date_val.strftime('%Y-%m-%d') if hasattr(sales_date_val, 'strftime') else "__________")
-        ],
-        [
-            create_paragraph(translate_pdf_content("Technical:", pdf_lang), bold=True),
-            create_paragraph(tech_signature_val if tech_signature_val else "_________________"),
-            create_paragraph(translate_pdf_content("Date:", pdf_lang), bold=True),
-            create_paragraph(tech_date_val.strftime('%Y-%m-%d') if hasattr(tech_date_val, 'strftime') else "__________")
-        ],
+        
         [
             create_paragraph(translate_pdf_content("QC Manager:", pdf_lang), bold=True),
             create_paragraph(qc_signature_val if qc_signature_val else "_________________"),
