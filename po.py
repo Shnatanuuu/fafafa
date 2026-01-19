@@ -1264,24 +1264,19 @@ with tab3:
     # Signatures
     st.markdown(f"#### {ICONS['signatures']} Signatures")
     
-   with col2 = st.columns(1)
-    
-   
-        
-        
-       
-    
-    with col2:
-        qc_signature = st.text_input(
-            "QC Manager Signature",
-            placeholder="QC Manager name",
-            key="qc_signature"
-        )
-        qc_date = st.date_input(
-            "QC Date",
-            datetime.now(),
-            key="qc_date"
-        )
+col2 = st.columns(1)[0]
+
+with col2:
+    qc_signature = st.text_input(
+        "QC Manager Signature",
+        placeholder="QC Manager name",
+        key="qc_signature"
+    )
+    qc_date = st.date_input(
+        "QC Date",
+        datetime.now().date(),
+        key="qc_date"
+    )
 
 # Generate PDF Button
 st.markdown("---")
