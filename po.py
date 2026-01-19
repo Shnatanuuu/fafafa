@@ -1264,7 +1264,7 @@ with tab3:
     # Signatures
     st.markdown(f"#### {ICONS['signatures']} Signatures")
     
-    col2 = st.columns(1)
+   with col2 = st.columns(1)
     
    
         
