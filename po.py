@@ -1264,30 +1264,12 @@ with tab3:
     # Signatures
     st.markdown(f"#### {ICONS['signatures']} Signatures")
     
-    col1, col2 = st.columns(2)
+    col2 = st.columns(1)
     
-    with col1:
-        sales_signature = st.text_input(
-            "Sales Signature",
-            placeholder="Sales representative name",
-            key="sales_signature"
-        )
-        sales_date = st.date_input(
-            "Sales Date",
-            datetime.now(),
-            key="sales_date"
-        )
+   
         
-        tech_signature = st.text_input(
-            "Technical Signature",
-            placeholder="Technical expert name",
-            key="tech_signature"
-        )
-        tech_date = st.date_input(
-            "Technical Date",
-            datetime.now(),
-            key="tech_date"
-        )
+        
+       
     
     with col2:
         qc_signature = st.text_input(
