@@ -638,7 +638,7 @@ def generate_pdf():
     
     # Company Header
     elements.append(Spacer(1, 10))
-    elements.append(Paragraph("PRODUCTION RISK ASSESSMENT REPORT", company_style))
+    elements.append(Paragraph("Grand Step", company_style))
     
     # Title
     report_title = translate_pdf_content("Production Risk Assessment Report", pdf_lang)
