@@ -239,7 +239,7 @@ for key, val in [
         st.session_state[key] = val
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  PDF DESIGN TOKENS  (identical palette to Wear Test app)
+#  PDF DESIGN TOKENS
 # ══════════════════════════════════════════════════════════════════════════════
 C_PRIMARY   = colors.HexColor('#1a1a2e')
 C_ACCENT    = colors.HexColor('#e94560')
@@ -266,7 +266,106 @@ def _font(pdf_lang, bold=False):
     return 'Helvetica-Bold' if bold else 'Helvetica'
 
 
-# ─── Shared drawing primitives (same as Wear Test app) ────────────────────────
+# ─── Text width measurement ────────────────────────────────────────────────────
+
+def _char_width(ch, font_size):
+    """
+    Return approximate rendered width of a single character in points.
+    Chinese/CJK characters are full-width (~1.0x font_size).
+    ASCII characters are ~0.52x font_size.
+    """
+    cp = ord(ch)
+    # CJK Unified Ideographs, CJK Extension, CJK Symbols & Punctuation,
+    # Fullwidth Forms, Katakana, Hiragana, etc.
+    if (0x4E00 <= cp <= 0x9FFF or   # CJK Unified Ideographs
+        0x3400 <= cp <= 0x4DBF or   # CJK Extension A
+        0x20000 <= cp <= 0x2A6DF or # CJK Extension B
+        0x3000 <= cp <= 0x303F or   # CJK Symbols and Punctuation
+        0xFF00 <= cp <= 0xFFEF or   # Halfwidth and Fullwidth Forms
+        0x3040 <= cp <= 0x309F or   # Hiragana
+        0x30A0 <= cp <= 0x30FF):    # Katakana
+        return font_size * 1.0
+    return font_size * 0.52
+
+
+def _text_width(text, font_size):
+    """Return approximate rendered pixel width of a text string."""
+    return sum(_char_width(ch, font_size) for ch in text)
+
+
+def _wrap_text(text, max_width, font_size):
+    """
+    Wrap text to fit within max_width (in points), correctly handling
+    CJK characters (full-width) vs ASCII (half-width).
+    Returns a list of line strings.
+    """
+    if not text or not text.strip():
+        return ["—"]
+
+    lines = []
+    # Split on existing newlines first
+    paragraphs = text.replace('\r\n', '\n').replace('\r', '\n').split('\n')
+
+    for paragraph in paragraphs:
+        if not paragraph.strip():
+            lines.append("")
+            continue
+
+        words = paragraph.split()
+        current = ""
+        current_w = 0.0
+
+        for word in words:
+            word_w = _text_width(word, font_size)
+            space_w = _text_width(" ", font_size)
+
+            if current == "":
+                # First word on line — if single word wider than max, break it by char
+                if word_w > max_width:
+                    # Break long word character by character
+                    for ch in word:
+                        ch_w = _char_width(ch, font_size)
+                        if current_w + ch_w > max_width and current:
+                            lines.append(current)
+                            current = ch
+                            current_w = ch_w
+                        else:
+                            current += ch
+                            current_w += ch_w
+                else:
+                    current = word
+                    current_w = word_w
+            else:
+                test_w = current_w + space_w + word_w
+                if test_w <= max_width:
+                    current += " " + word
+                    current_w = test_w
+                else:
+                    lines.append(current)
+                    if word_w > max_width:
+                        # Break long word character by character
+                        current = ""
+                        current_w = 0.0
+                        for ch in word:
+                            ch_w = _char_width(ch, font_size)
+                            if current_w + ch_w > max_width and current:
+                                lines.append(current)
+                                current = ch
+                                current_w = ch_w
+                            else:
+                                current += ch
+                                current_w += ch_w
+                    else:
+                        current = word
+                        current_w = word_w
+
+        if current:
+            lines.append(current)
+
+    return lines if lines else ["—"]
+
+
+# ─── Shared drawing primitives ─────────────────────────────────────────────────
 
 def draw_page_frame(c, page_num, total_pages, pdf_lang, city, city_zh, gen_time):
     w, h = PAGE_W, PAGE_H
@@ -339,7 +438,8 @@ def draw_two_col_kv(c, y, pairs, pdf_lang, shade_alt=True):
 
 def draw_text_block(c, y, label, text, pdf_lang, accent_color=None):
     """
-    Full-width multi-line text block (handles long paragraphs without overflow).
+    Full-width multi-line text block. Dynamically sizes to content.
+    Correctly handles CJK (full-width) vs ASCII (half-width) characters.
     Returns new y.
     """
     if not text or not text.strip():
@@ -350,45 +450,37 @@ def draw_text_block(c, y, label, text, pdf_lang, accent_color=None):
     fn_b      = _font(pdf_lang, bold=True)
     fn_r      = _font(pdf_lang)
     FONT_SIZE = 8
-    LINE_H    = 13
-    PADDING   = 7
+    LINE_H    = 14
+    PADDING   = 8
     LABEL_H   = 18
-    MAX_CHARS = int(CONTENT_W / (FONT_SIZE * 0.52))
 
-    # Word-wrap
-    words   = text.split()
-    lines   = []
-    current = ""
-    for word in words:
-        test = (current + " " + word).strip()
-        if len(test) <= MAX_CHARS:
-            current = test
-        else:
-            if current:
-                lines.append(current)
-            current = word
-    if current:
-        lines.append(current)
-    if not lines:
-        lines = ["—"]
+    # Use pixel-aware wrapping
+    max_text_width = CONTENT_W - 20  # 10px padding each side
+    lines = _wrap_text(text, max_text_width, FONT_SIZE)
 
     total_text_h = len(lines) * LINE_H + PADDING * 2
     block_h      = LABEL_H + total_text_h
 
+    # Background
     c.setFillColor(C_LIGHT)
     c.rect(MARGIN_L, y - block_h, CONTENT_W, block_h, fill=1, stroke=0)
+    # Label bar
     c.setFillColor(accent_color)
     c.rect(MARGIN_L, y - LABEL_H, CONTENT_W, LABEL_H, fill=1, stroke=0)
+    # Border
     c.setStrokeColor(C_GREY_LINE); c.setLineWidth(0.4)
     c.rect(MARGIN_L, y - block_h, CONTENT_W, block_h, fill=0, stroke=1)
 
+    # Label text
     c.setFillColor(C_WHITE); c.setFont(fn_b, 8)
     c.drawString(MARGIN_L + 8, y - LABEL_H + 6, label)
 
+    # Content text
     ty = y - LABEL_H - PADDING - LINE_H + 4
     c.setFillColor(C_PRIMARY); c.setFont(fn_r, FONT_SIZE)
     for line in lines:
-        c.drawString(MARGIN_L + 10, ty, line)
+        if line:  # skip blank separator lines
+            c.drawString(MARGIN_L + 10, ty, line)
         ty -= LINE_H
 
     return y - block_h - 6
@@ -398,19 +490,21 @@ def draw_risk_table(c, y, rows, col_labels, pdf_lang):
     """
     Three-column risk table: Risk Stage | Description | CAP Description
     rows: list of (stage_label, desc_text, cap_text)
+    Uses pixel-aware text wrapping for correct CJK layout.
     """
     COL_WIDTHS = [CONTENT_W * 0.28, CONTENT_W * 0.36, CONTENT_W * 0.36]
-    HDR_H  = 22
+    HDR_H   = 22
     ROW_PAD = 8
     FONT_SIZE = 8
-    LINE_H = 12
-    MAX_CHARS_DESC = int(COL_WIDTHS[1] / (FONT_SIZE * 0.52))
-    MAX_CHARS_CAP  = int(COL_WIDTHS[2] / (FONT_SIZE * 0.52))
+    LINE_H    = 13
+
+    # Inner text width per column (minus padding)
+    col_inner = [cw - 12 for cw in COL_WIDTHS]
 
     fn_b = _font(pdf_lang, bold=True)
     fn_r = _font(pdf_lang)
 
-    # Header
+    # ── Header ──
     c.setFillColor(C_ACCENT)
     c.rect(MARGIN_L, y - HDR_H, CONTENT_W, HDR_H, fill=1, stroke=0)
     c.setFillColor(C_WHITE); c.setFont(fn_b, 8.5)
@@ -420,72 +514,63 @@ def draw_risk_table(c, y, rows, col_labels, pdf_lang):
         cx += COL_WIDTHS[i]
     y -= HDR_H
 
-    def wrap(text, max_chars):
-        if not text or not text.strip():
-            return ["—"]
-        words = text.split(); lines = []; cur = ""
-        for w in words:
-            test = (cur + " " + w).strip()
-            if len(test) <= max_chars: cur = test
-            else:
-                if cur: lines.append(cur)
-                cur = w
-        if cur: lines.append(cur)
-        return lines or ["—"]
+    # Track where the table started for outer border
+    table_top = y
 
     for i, (stage, desc, cap) in enumerate(rows):
-        # Compute row height from tallest column
-        stage_lines = wrap(stage, int(COL_WIDTHS[0] / (FONT_SIZE * 0.52)))
-        desc_lines  = wrap(desc,  MAX_CHARS_DESC)
-        cap_lines   = wrap(cap,   MAX_CHARS_CAP)
-        max_lines   = max(len(stage_lines), len(desc_lines), len(cap_lines))
-        row_h       = max_lines * LINE_H + ROW_PAD * 2
+        # Wrap each column using pixel-accurate wrapping
+        stage_lines = _wrap_text(stage, col_inner[0], FONT_SIZE)
+        desc_lines  = _wrap_text(desc,  col_inner[1], FONT_SIZE)
+        cap_lines   = _wrap_text(cap,   col_inner[2], FONT_SIZE)
 
+        max_lines = max(len(stage_lines), len(desc_lines), len(cap_lines))
+        row_h     = max_lines * LINE_H + ROW_PAD * 2
+
+        # Row background
         shade = (i % 2 == 0)
         if shade:
             c.setFillColor(C_LIGHT)
             c.rect(MARGIN_L, y - row_h, CONTENT_W, row_h, fill=1, stroke=0)
+
+        # Bottom separator
         c.setStrokeColor(C_GREY_LINE); c.setLineWidth(0.3)
         c.line(MARGIN_L, y - row_h, MARGIN_L + CONTENT_W, y - row_h)
 
-        # Draw column separators
+        # Vertical column separators
         cx_sep = MARGIN_L + COL_WIDTHS[0]
         c.line(cx_sep, y, cx_sep, y - row_h)
         cx_sep += COL_WIDTHS[1]
         c.line(cx_sep, y, cx_sep, y - row_h)
 
-        # Stage (bold)
+        # Stage column (bold, accent colour)
         c.setFillColor(C_ACCENT2); c.setFont(fn_b, FONT_SIZE)
         ty = y - ROW_PAD - LINE_H + 3
         for ln in stage_lines:
-            c.drawString(MARGIN_L + 6, ty, ln)
+            if ln:
+                c.drawString(MARGIN_L + 6, ty, ln)
             ty -= LINE_H
 
-        # Description
+        # Description column
         c.setFillColor(C_PRIMARY); c.setFont(fn_r, FONT_SIZE)
         ty = y - ROW_PAD - LINE_H + 3
         for ln in desc_lines:
-            c.drawString(MARGIN_L + COL_WIDTHS[0] + 6, ty, ln)
+            if ln:
+                c.drawString(MARGIN_L + COL_WIDTHS[0] + 6, ty, ln)
             ty -= LINE_H
 
-        # CAP
+        # CAP column
         ty = y - ROW_PAD - LINE_H + 3
         for ln in cap_lines:
-            c.drawString(MARGIN_L + COL_WIDTHS[0] + COL_WIDTHS[1] + 6, ty, ln)
+            if ln:
+                c.drawString(MARGIN_L + COL_WIDTHS[0] + COL_WIDTHS[1] + 6, ty, ln)
             ty -= LINE_H
 
         y -= row_h
 
-    # Outer border
+    # Outer border around the entire table body
+    table_body_h = table_top - y
     c.setStrokeColor(C_GREY_LINE); c.setLineWidth(0.5)
-    c.rect(MARGIN_L, y, CONTENT_W, HDR_H + sum(
-        max(
-            len(wrap(r[0], int(COL_WIDTHS[0] / (FONT_SIZE * 0.52)))),
-            len(wrap(r[1], MAX_CHARS_DESC)),
-            len(wrap(r[2], MAX_CHARS_CAP))
-        ) * LINE_H + ROW_PAD * 2
-        for r in rows
-    ), fill=0, stroke=1)
+    c.rect(MARGIN_L, y, CONTENT_W, table_body_h, fill=0, stroke=1)
 
     return y - 6
 
@@ -595,12 +680,13 @@ def generate_pdf():
         px = MARGIN_L + 24
         for lbl, val in pill_items:
             c.setFillColor(colors.HexColor('#0d2244'))
-            pill_w = len(f"{lbl}: {val}") * 5.5 + 16
+            pill_w = _text_width(f"{lbl}: {val}", 7) + 16
             c.roundRect(px, y - 108, pill_w, 16, 4, fill=1, stroke=0)
             c.setFillColor(colors.HexColor('#aab8ff')); c.setFont(fn_b, 7)
             c.drawString(px + 8, y - 100, f"{lbl}:")
+            lbl_w = _text_width(lbl, 7) + 8
             c.setFillColor(C_WHITE); c.setFont(fn_r, 7)
-            c.drawString(px + 8 + len(lbl) * 4.3 + 8, y - 100, val)
+            c.drawString(px + 8 + lbl_w, y - 100, val)
             px += pill_w + 8
         y -= 136
 
@@ -629,10 +715,93 @@ def generate_pdf():
             loc("Description","描述"),
             loc("CAP Description","纠正措施"),
         ]
-        y = draw_risk_table(c, y, risk_rows, col_labels, pdf_lang)
+
+        # Check if the table will overflow one page and handle across pages
+        # For simplicity: render row by row, starting a new page if needed
+        COL_WIDTHS = [CONTENT_W * 0.28, CONTENT_W * 0.36, CONTENT_W * 0.36]
+        HDR_H   = 22
+        ROW_PAD = 8
+        FONT_SIZE_TBL = 8
+        LINE_H_TBL    = 13
+        col_inner = [cw - 12 for cw in COL_WIDTHS]
+
+        # Draw table header
+        def draw_table_header(cy):
+            c.setFillColor(C_ACCENT)
+            c.rect(MARGIN_L, cy - HDR_H, CONTENT_W, HDR_H, fill=1, stroke=0)
+            c.setFillColor(C_WHITE); c.setFont(_font(pdf_lang, bold=True), 8.5)
+            cx2 = MARGIN_L + 6
+            for ii, lbl in enumerate(col_labels):
+                c.drawString(cx2, cy - HDR_H + 8, lbl)
+                cx2 += COL_WIDTHS[ii]
+            return cy - HDR_H
+
+        y = draw_table_header(y)
+        table_top = y
+
+        for row_idx, (stage, desc, cap) in enumerate(risk_rows):
+            stage_lines = _wrap_text(stage, col_inner[0], FONT_SIZE_TBL)
+            desc_lines  = _wrap_text(desc,  col_inner[1], FONT_SIZE_TBL)
+            cap_lines   = _wrap_text(cap,   col_inner[2], FONT_SIZE_TBL)
+
+            max_lines = max(len(stage_lines), len(desc_lines), len(cap_lines))
+            row_h     = max_lines * LINE_H_TBL + ROW_PAD * 2
+
+            # If row doesn't fit on current page, close table border, new page, redraw header
+            if y - row_h < FOOTER_H + 20:
+                # Close current table border
+                table_body_h = table_top - y
+                if table_body_h > 0:
+                    c.setStrokeColor(C_GREY_LINE); c.setLineWidth(0.5)
+                    c.rect(MARGIN_L, y, CONTENT_W, table_body_h, fill=0, stroke=1)
+                y = new_page()
+                y = draw_table_header(y)
+                table_top = y
+
+            shade = (row_idx % 2 == 0)
+            if shade:
+                c.setFillColor(C_LIGHT)
+                c.rect(MARGIN_L, y - row_h, CONTENT_W, row_h, fill=1, stroke=0)
+
+            c.setStrokeColor(C_GREY_LINE); c.setLineWidth(0.3)
+            c.line(MARGIN_L, y - row_h, MARGIN_L + CONTENT_W, y - row_h)
+
+            cx_sep = MARGIN_L + COL_WIDTHS[0]
+            c.line(cx_sep, y, cx_sep, y - row_h)
+            cx_sep += COL_WIDTHS[1]
+            c.line(cx_sep, y, cx_sep, y - row_h)
+
+            c.setFillColor(C_ACCENT2); c.setFont(_font(pdf_lang, bold=True), FONT_SIZE_TBL)
+            ty = y - ROW_PAD - LINE_H_TBL + 3
+            for ln in stage_lines:
+                if ln:
+                    c.drawString(MARGIN_L + 6, ty, ln)
+                ty -= LINE_H_TBL
+
+            c.setFillColor(C_PRIMARY); c.setFont(_font(pdf_lang), FONT_SIZE_TBL)
+            ty = y - ROW_PAD - LINE_H_TBL + 3
+            for ln in desc_lines:
+                if ln:
+                    c.drawString(MARGIN_L + COL_WIDTHS[0] + 6, ty, ln)
+                ty -= LINE_H_TBL
+
+            ty = y - ROW_PAD - LINE_H_TBL + 3
+            for ln in cap_lines:
+                if ln:
+                    c.drawString(MARGIN_L + COL_WIDTHS[0] + COL_WIDTHS[1] + 6, ty, ln)
+                ty -= LINE_H_TBL
+
+            y -= row_h
+
+        # Close final table border
+        table_body_h = table_top - y
+        if table_body_h > 0:
+            c.setStrokeColor(C_GREY_LINE); c.setLineWidth(0.5)
+            c.rect(MARGIN_L, y, CONTENT_W, table_body_h, fill=0, stroke=1)
+        y -= 6
 
         # ════════════════════════════════════════════════════════════════════
-        # PAGE 2 — Department Comments
+        # Department Comments page
         # ════════════════════════════════════════════════════════════════════
         y = new_page()
         y = draw_section_header(c, y, loc("3. DEPARTMENT COMMENTS","3. 部门意见"), pdf_lang)
@@ -661,20 +830,17 @@ def generate_pdf():
         c.setStrokeColor(C_GREY_LINE); c.setLineWidth(0.5)
         c.roundRect(MARGIN_L, y - 54, CONTENT_W, 54, 4, fill=0, stroke=1)
 
-        # QC label
         c.setFillColor(C_ACCENT2); c.setFont(fn_b, 8)
         c.drawString(MARGIN_L + 10, y - 18, loc("QC Manager:","品控经理："))
         c.setFillColor(C_PRIMARY); c.setFont(fn_r, 8)
         c.drawString(MARGIN_L + 10, y - 32, qc_sig or "_________________")
 
-        # Date
         c.setFillColor(C_ACCENT2); c.setFont(fn_b, 8)
         half = CONTENT_W / 2
         c.drawString(MARGIN_L + half + 10, y - 18, loc("Date:","日期："))
         c.setFillColor(C_PRIMARY); c.setFont(fn_r, 8)
         c.drawString(MARGIN_L + half + 10, y - 32, qc_date_str)
 
-        # Signature lines
         c.setStrokeColor(C_PRIMARY); c.setLineWidth(1)
         c.line(MARGIN_L + 10, y - 44, MARGIN_L + half - 10, y - 44)
         c.line(MARGIN_L + half + 10, y - 44, MARGIN_L + CONTENT_W - 10, y - 44)
@@ -689,19 +855,11 @@ def generate_pdf():
             "注：品控将此报告连同最终检验报告一并发送至办公室。"
             "办公室助理将上传至ERP系统并相应发送邮件至工厂/代理商。"
         )
-        # Word-wrap note
-        MAX_NOTE = int(CONTENT_W / (7.5 * 0.52))
-        note_words = note.split(); note_lines = []; cur = ""
-        for w in note_words:
-            test = (cur + " " + w).strip()
-            if len(test) <= MAX_NOTE: cur = test
-            else:
-                if cur: note_lines.append(cur)
-                cur = w
-        if cur: note_lines.append(cur)
+        note_lines = _wrap_text(note, CONTENT_W - 20, 7.5)
         c.setFillColor(C_GREY_TEXT); c.setFont(fn_r, 7.5)
         for ln in note_lines:
-            c.drawString(MARGIN_L, y, ln)
+            if ln:
+                c.drawString(MARGIN_L, y, ln)
             y -= 11
         y -= 6
 
@@ -734,7 +892,7 @@ def generate_pdf():
 st.markdown("""
 <style>
   .main-header{font-size:2.6rem;font-weight:800;text-align:center;
-  color: #4299E1; /* Light gray color - change this to any color you want */
+  color: #4299E1;
   margin-bottom:1.5rem;padding:0.5rem;}
   .section-header{font-size:1.4rem;font-weight:700;color:#1a1a2e;
     margin:2rem 0 1rem;padding:0.7rem 1.2rem;
